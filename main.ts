@@ -1,134 +1,263 @@
-import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting } from 'obsidian';
+import { Plugin, TFile, TAbstractFile, TFolder, EditorSuggest, Editor, EditorPosition, EditorSuggestTriggerInfo, EditorSuggestContext, Notice} from "obsidian";
 
-// Remember to rename these classes and interfaces!
+let dictionary_terms: Array<string> = [];
 
-interface MyPluginSettings {
-	mySetting: string;
+const excluded_chars: Array<string> = [' ', '.', '!', '?', "#", "$", "@", "%", "^", "&", "*", "(", ")", "[", "]", "{", "}", ";", ":", "'", '"', ",", "/", "<", ">", "~", "`", "+"]
+
+let dictionary_name: string = "Dictionary";
+
+interface DictionaryDevSettings {
+	something: string;
 }
 
-const DEFAULT_SETTINGS: MyPluginSettings = {
-	mySetting: 'default'
+const DEFAULT_SETTINGS: DictionaryDevSettings = {
+	something: "FooBar"
 }
 
-export default class MyPlugin extends Plugin {
-	settings: MyPluginSettings;
+//Calculates the closeness of two given strings.
+const levenshteinDistance = (first: string, second: string): number => {
+	if (first.length === 0 || second.length === 0) {
+		return Math.abs(first.length - second.length)
+	}
+
+	let levenshtein_matrix: number[][] = []
+
+	//Increment the first column of each row
+	let i: number = 0;
+
+	for (i; i <= second.length; ++i) {
+		levenshtein_matrix[i] = [i];
+	}
+
+	//Go through each column of first row
+	let j: number = 0;
+
+	for (j; j <= first.length; ++j) {
+		levenshtein_matrix[0][j] = j
+	}
+
+	//Fill out rest of matrix
+	for (i = 1; i <= second.length; ++i) {
+		for (j = 1; j <= first.length; ++j) {
+			if (second.at(i - 1) === first.at(j - 1)) {
+				levenshtein_matrix[i][j] = levenshtein_matrix[i - 1][j - 1];
+			}
+			else {
+				levenshtein_matrix[i][j] = Math.min(levenshtein_matrix[i - 1][j - 1] + 1, //Substitution of a char
+					 								Math.min(levenshtein_matrix[i][j - 1] + 1, //Insertion of a char
+						 							levenshtein_matrix[i-1][j] + 1))		// Deletion of a char
+			}
+		}
+	}
+
+	return levenshtein_matrix[second.length][first.length];
+}
+
+class DictionaryDevAutocomplete extends EditorSuggest<string> {
+	limit: 4
+
+	onTrigger(cursor: EditorPosition, editor: Editor, file: TFile | null): EditorSuggestTriggerInfo | null {
+		const line: string = editor.getLine(cursor.line);
+
+		if (line.length <= 0) {
+			return null;
+		}
+
+		const position: EditorPosition = editor.getCursor("from")
+
+		if (excluded_chars.contains(line.at(position.ch - 1)!)) {
+			return null;
+		}
+
+		let start_index: number = 0, end_index: number = line.length;
+
+		for (let i = position.ch - 1; i >= 0; --i) {
+			if (excluded_chars.contains(line.at(i)!)) {
+				start_index = i + 1;
+				break;
+			}
+		}
+
+		for (let i = position.ch - 1; i < line.length; ++i) {
+			if (excluded_chars.contains(line.at(i)!)) {
+				end_index = i;
+				break;
+			}
+		}
+
+		if (end_index - start_index <= 1) {
+			return null;
+		}
+
+		return {
+			start: { line: cursor.line, ch: start_index },
+			end: { line: cursor.line, ch: end_index },
+
+			query: line.substring(start_index, end_index)
+		};
+	}
+
+	getSuggestions(context: EditorSuggestContext): string[] | Promise<string[]> {
+		return new Promise((resolve, reject) => {
+			const query = context.query.toUpperCase();
+
+			let regex = new RegExp(query);
+
+			resolve(dictionary_terms.filter((term) => {
+				if (term.toUpperCase().match(regex)) {
+					return term;
+				}
+			}).sort((smaller, bigger) => {
+				return levenshteinDistance(smaller.toUpperCase(), query) - levenshteinDistance(bigger.toUpperCase(), query);
+			}))
+		});
+	}
+
+	renderSuggestion(value: string, el: HTMLElement): void {
+		el.appendText(value)
+	}
+
+	selectSuggestion(value: string, evt: MouseEvent | KeyboardEvent): void {
+		const editor_position: EditorPosition = this.app.workspace.activeEditor?.editor?.getCursor("from")!;
+
+		const line: string = this.app.workspace.activeEditor?.editor?.getLine(editor_position.line)!;
+
+		let start_index: number = 0, end_index: number = line.length;
+
+		for (let i = editor_position.ch - 1; i >= 0; --i) {
+			if (excluded_chars.contains(line.at(i)!)) {
+				start_index = i + 1;
+				break;
+			}
+		}
+
+		for (let j = editor_position.ch - 1; j < line.length; ++j) {
+			if (excluded_chars.contains(line.at(j)!)) {
+				end_index = j;
+				break;
+			}
+		}
+
+		const first_char: string = line.substring(start_index, end_index).at(0)!;
+
+		if (first_char !== first_char.toUpperCase() && value.length > 1 && value.at(1) !== value.at(1)?.toUpperCase()) {
+			value = value.toLowerCase();
+		}
+
+		this.app.workspace.activeEditor?.editor?.replaceRange(`[[${value}]]`, { line: editor_position.line, ch: start_index}, { line: editor_position.line, ch: end_index})
+	}
+}
+
+class DictionaryDevDictAddition extends EditorSuggest<string> {
+	limit: 5
+
+	onTrigger(cursor: EditorPosition, editor: Editor, file: TFile | null): EditorSuggestTriggerInfo | null {
+		const line: string = editor.getLine(cursor.line);
+
+		if (line.length <= 6) {
+			return null;
+		}
+
+		const open_tag_index: number = line.indexOf("!!!");
+
+		const close_tag_index: number = line.indexOf("!!!", open_tag_index + 3);
+
+		const definition_index: number = line.indexOf(": ", open_tag_index);
+
+		if (close_tag_index - open_tag_index < 4 || open_tag_index === -1 || close_tag_index === -1 || definition_index - open_tag_index < 4 || close_tag_index - definition_index <= 0) {
+			return null;
+		}
+
+		return {
+			start: { line: cursor.line, ch: open_tag_index },
+			end: { line: cursor.line, ch: close_tag_index },
+
+			query: line.substring(open_tag_index + 3, close_tag_index)
+		};
+	}
+
+	getSuggestions(context: EditorSuggestContext): string[] | Promise<string[]> {
+
+		return new Promise((resolve, reject) => {
+			resolve([context.query])
+		});
+	}
+
+	renderSuggestion(value: string, el: HTMLElement): void {
+		el.appendText(`Create Term: ${value.substring(0, value.indexOf(": "))}`)
+	}
+
+	selectSuggestion(value: string, evt: MouseEvent | KeyboardEvent): void {
+		const file_path: string = this.app.workspace.activeEditor?.file!.path!.substring(0, this.app.workspace.activeEditor?.file!.path!.length - 3)!;
+
+		new Notice(file_path);
+
+		const name: string = value.substring(0, value.indexOf(": "));
+
+		const description: string = value.substring(value.indexOf(": ") + 2);
+		
+		if (!this.app.vault.getFolderByPath(`${dictionary_name}/${file_path}`)) {
+			this.app.vault.createFolder(`${dictionary_name}/${file_path}`);
+		}
+
+		this.app.vault.create(`${dictionary_name}/${file_path}/${name}.md`, description);
+
+		const editor_position = this.app.workspace.activeEditor?.editor?.getCursor("from")!;
+
+		const line: string = this.app.workspace.activeEditor?.editor?.getLine(editor_position.line)!;
+		
+		const open_tag_index: number = line.indexOf("!!!");
+
+		const close_tag_index: number = line.indexOf("!!!", open_tag_index + 3);
+		
+		this.app.workspace.activeEditor?.editor?.replaceRange(`[[${name}]]`, { line: editor_position.line, ch: open_tag_index}, { line: editor_position.line, ch: close_tag_index + 3})
+	}
+}
+
+export default class DictionaryDev extends Plugin {
+	settings: DictionaryDevSettings
 
 	async onload() {
 		await this.loadSettings();
 
-		// This creates an icon in the left ribbon.
-		const ribbonIconEl = this.addRibbonIcon('dice', 'Sample Plugin', (evt: MouseEvent) => {
-			// Called when the user clicks the icon.
-			new Notice('This is a notice!');
-		});
-		// Perform additional things with the ribbon
-		ribbonIconEl.addClass('my-plugin-ribbon-class');
+		let dictionary: TFolder | null = this.app.vault.getFolderByPath(dictionary_name);
 
-		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
-		const statusBarItemEl = this.addStatusBarItem();
-		statusBarItemEl.setText('Status Bar Text');
+		if (!dictionary) {
+			this.app.vault.createFolder(dictionary_name)
+		}
 
-		// This adds a simple command that can be triggered anywhere
-		this.addCommand({
-			id: 'open-sample-modal-simple',
-			name: 'Open sample modal (simple)',
-			callback: () => {
-				new SampleModal(this.app).open();
+		dictionary = this.app.vault.getFolderByPath(dictionary_name);
+
+		let terms: TAbstractFile[] = dictionary!.children
+
+		for (let i: number = 0; i < terms.length; ++i) {
+			const term: TAbstractFile = terms[i]
+
+			if (term instanceof TFolder) {
+				terms = terms.concat(term.children)
+				continue;
 			}
-		});
-		// This adds an editor command that can perform some operation on the current editor instance
-		this.addCommand({
-			id: 'sample-editor-command',
-			name: 'Sample editor command',
-			editorCallback: (editor: Editor, view: MarkdownView) => {
-				console.log(editor.getSelection());
-				editor.replaceSelection('Sample Editor Command');
+
+			dictionary_terms.push(term.name.substring(0, term.name.length - 3))
+		}
+
+		this.registerEditorSuggest(new DictionaryDevAutocomplete(this.app));
+
+		this.registerEditorSuggest(new DictionaryDevDictAddition(this.app));
+
+		this.registerEvent(this.app.vault.on("create", (file) => {
+			if (file.path.includes(dictionary!.name) && !dictionary_terms.contains(file.name.substring(0, file.name.length - 3))) {
+				dictionary_terms.push(file.name.substring(0, file.name.length - 3))
 			}
-		});
-		// This adds a complex command that can check whether the current state of the app allows execution of the command
-		this.addCommand({
-			id: 'open-sample-modal-complex',
-			name: 'Open sample modal (complex)',
-			checkCallback: (checking: boolean) => {
-				// Conditions to check
-				const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
-				if (markdownView) {
-					// If checking is true, we're simply "checking" if the command can be run.
-					// If checking is false, then we want to actually perform the operation.
-					if (!checking) {
-						new SampleModal(this.app).open();
-					}
+		}));
 
-					// This command will only show up in Command Palette when the check function returns true
-					return true;
-				}
-			}
-		});
-
-		// This adds a settings tab so the user can configure various aspects of the plugin
-		this.addSettingTab(new SampleSettingTab(this.app, this));
-
-		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
-		// Using this function will automatically remove the event listener when this plugin is disabled.
-		this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
-			console.log('click', evt);
-		});
-
-		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
-		this.registerInterval(window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000));
-	}
-
-	onunload() {
-
+		this.registerEvent(this.app.vault.on("rename", (file, oldPath) => {
+			dictionary_terms.remove(oldPath.substring(oldPath.lastIndexOf("/") + 1, oldPath.length - 3))
+			dictionary_terms.push(file.name.substring(0, file.name.length - 3))
+		}));
 	}
 
 	async loadSettings() {
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
-	}
-
-	async saveSettings() {
-		await this.saveData(this.settings);
-	}
-}
-
-class SampleModal extends Modal {
-	constructor(app: App) {
-		super(app);
-	}
-
-	onOpen() {
-		const {contentEl} = this;
-		contentEl.setText('Woah!');
-	}
-
-	onClose() {
-		const {contentEl} = this;
-		contentEl.empty();
-	}
-}
-
-class SampleSettingTab extends PluginSettingTab {
-	plugin: MyPlugin;
-
-	constructor(app: App, plugin: MyPlugin) {
-		super(app, plugin);
-		this.plugin = plugin;
-	}
-
-	display(): void {
-		const {containerEl} = this;
-
-		containerEl.empty();
-
-		new Setting(containerEl)
-			.setName('Setting #1')
-			.setDesc('It\'s a secret')
-			.addText(text => text
-				.setPlaceholder('Enter your secret')
-				.setValue(this.plugin.settings.mySetting)
-				.onChange(async (value) => {
-					this.plugin.settings.mySetting = value;
-					await this.plugin.saveSettings();
-				}));
 	}
 }

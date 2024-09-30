@@ -1,11 +1,10 @@
 {
-	"id": "sample-plugin",
-	"name": "Sample Plugin",
+	"id": "dictionary-dev",
+	"name": "Dictionary Dev",
 	"version": "1.0.0",
 	"minAppVersion": "0.15.0",
-	"description": "Demonstrates some of the capabilities of the Obsidian API.",
-	"author": "Obsidian",
-	"authorUrl": "https://obsidian.md",
-	"fundingUrl": "https://obsidian.md/pricing",
+	"description": "Creates a dictionary that fills with terms in any note, and links to those when the terms are written!",
+	"author": "Logan Mifflin",
+	"authorUrl": "https://github.com/LoganMiff",
 	"isDesktopOnly": false
 }
