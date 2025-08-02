@@ -1,6 +1,6 @@
 # DictionaryDev
 
-A simple plugin to quickly make terms for notes, write-ups, anything you like on the go! Simply, when writing a new term, follow the following format:
+A simple Obsidian plugin to quickly make terms for notes, write-ups, anything you like on the go! Simply, when writing a new term, follow the following format:
 
 	!!![insert term here]: [insert definition here]!!!
 
